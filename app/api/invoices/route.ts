@@ -150,10 +150,19 @@ export async function POST(request: NextRequest) {
         data: {
           ocrText: ocrResult.text,
           vendor: ocrResult.parsedData.vendor,
+          clientName: ocrResult.parsedData.clientName,
+          invoiceNumber: ocrResult.parsedData.invoiceNumber,
           amount: ocrResult.parsedData.amount,
+          vatAmount: ocrResult.parsedData.vatAmount,
           date: parsedDate,
           confidence: ocrResult.parsedData.confidence,
+          company: ocrResult.parsedData.company ? ocrResult.parsedData.company as any : 'UNKNOWN',
           status: ocrResult.parsedData.confidence >= 80 ? 'PROCESSED' : 'TO_PROCESS',
+          iban: ocrResult.parsedData.iban,
+          email: ocrResult.parsedData.email,
+          phone: ocrResult.parsedData.phone,
+          siret: ocrResult.parsedData.siret,
+          address: ocrResult.parsedData.address,
         },
       });
     } else {
@@ -190,8 +199,18 @@ export async function GET(request: NextRequest) {
     const maxAmount = searchParams.get('maxAmount');
     const search = searchParams.get('search');
     const period = searchParams.get('period');
+    const company = searchParams.get('company');
 
     const where: Record<string, unknown> = {};
+
+    if (company && company !== 'all') {
+      const companyMap: Record<string, string> = {
+        'sofia-transport': 'SOFIA_TRANSPORT',
+        'sofiane-transport': 'SOFIANE_TRANSPORT',
+        'garage-expertise': 'GARAGE_EXPERTISE',
+      };
+      where.company = companyMap[company] || company.toUpperCase();
+    }
 
     if (status && status !== 'all') {
       where.status = status.toUpperCase();
@@ -220,6 +239,12 @@ export async function GET(request: NextRequest) {
       let startDate: Date;
       
       switch (period) {
+        case 'today':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          break;
+        case 'week':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+          break;
         case 'thisMonth':
           startDate = new Date(now.getFullYear(), now.getMonth(), 1);
           break;
@@ -241,9 +266,21 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
+    // Get counts filtered by company if specified
+    const countWhere = { ...where };
+    delete (countWhere as any).skip;
+    delete (countWhere as any).take;
+    delete (countWhere as any).orderBy;
+
     const counts = await prisma.invoice.groupBy({
       by: ['status'],
       _count: true,
+      where: company ? { company: where.company as any } : undefined,
+    });
+
+    // Get unclassified invoices count (company = UNKNOWN)
+    const unclassifiedCount = await prisma.invoice.count({
+      where: { company: 'UNKNOWN' },
     });
 
     return NextResponse.json({
@@ -255,6 +292,7 @@ export async function GET(request: NextRequest) {
         processed: counts.find(c => c.status === 'PROCESSED')?._count || 0,
         error: counts.find(c => c.status === 'ERROR')?._count || 0,
         validated: counts.find(c => c.status === 'VALIDATED')?._count || 0,
+        unclassified: unclassifiedCount,
       },
     });
   } catch (error) {

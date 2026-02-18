@@ -1,181 +1,109 @@
-import { prisma } from "@/lib/prisma"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Plus, FileText, Building2 } from "lucide-react"
-import Link from "next/link"
+import Link from "next/link";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Truck, Wrench, Package, FileText, ArrowRight } from "lucide-react";
 
-async function getInvoicesCount() {
-  const total = await prisma.invoice.count()
-  const pending = await prisma.invoice.count({
-    where: {
-      status: { in: ['TO_PROCESS', 'PROCESSING'] }
-    }
-  })
-  return { total, pending }
-}
+const companies = [
+  {
+    id: "sofia-transport",
+    name: "Sofia Transport",
+    description: "Transporteur logistique",
+    icon: Truck,
+    color: "blue",
+    dbKey: "SOFIA_TRANSPORT" as const,
+  },
+  {
+    id: "sofiane-transport",
+    name: "Sofiane Transport",
+    description: "Transporteur logistique",
+    icon: Truck,
+    color: "orange",
+    dbKey: "SOFIANE_TRANSPORT" as const,
+  },
+  {
+    id: "garage-expertise",
+    name: "Garage Expertise",
+    description: "Réparation et expertise automobile",
+    icon: Wrench,
+    color: "green",
+    dbKey: "GARAGE_EXPERTISE" as const,
+  },
+];
 
-async function getVendorsCount() {
-  const vendors = await prisma.invoice.findMany({
-    where: {
-      vendor: { not: null }
-    },
-    select: {
-      vendor: true
-    },
-    distinct: ['vendor']
-  })
-  return vendors.length
-}
+const colorClasses: Record<string, {
+  bg: string;
+  icon: string;
+  border: string;
+  text: string;
+}> = {
+  blue: {
+    bg: "bg-blue-50",
+    icon: "bg-blue-100 text-blue-600",
+    border: "border-blue-200 hover:border-blue-400",
+    text: "text-blue-600",
+  },
+  orange: {
+    bg: "bg-orange-50",
+    icon: "bg-orange-100 text-orange-600",
+    border: "border-orange-200 hover:border-orange-400",
+    text: "text-orange-600",
+  },
+  green: {
+    bg: "bg-green-50",
+    icon: "bg-green-100 text-green-600",
+    border: "border-green-200 hover:border-green-400",
+    text: "text-green-600",
+  },
+};
 
-async function getRecentInvoices() {
-  return await prisma.invoice.findMany({
-    orderBy: {
-      createdAt: 'desc'
-    },
-    take: 5
-  })
-}
-
-export default async function CabinetPage() {
-  const { total: totalInvoices, pending: pendingInvoices } = await getInvoicesCount()
-  const vendorsCount = await getVendorsCount()
-  const recentInvoices = await getRecentInvoices()
-
+export default function CabinetPage() {
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Tableau de bord</h1>
-          <p className="text-gray-600">Gérez vos factures et fournisseurs</p>
-        </div>
+    <div className="space-y-8">
+      <div className="text-center py-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          Bienvenue sur SofiaFactu
+        </h1>
+        <p className="text-gray-600">
+          Sélectionnez une société pour gérer ses factures
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Factures</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalInvoices}</div>
-            <p className="text-xs text-muted-foreground">
-              {pendingInvoices} en attente
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">En attente</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{pendingInvoices}</div>
-            <p className="text-xs text-muted-foreground">
-              À traiter
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Fournisseurs</CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{vendorsCount}</div>
-            <p className="text-xs text-muted-foreground">
-              Différents fournisseurs
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent invoices */}
-      <div className="bg-white rounded-lg border">
-        <div className="p-6 border-b">
-          <h2 className="text-lg font-semibold">Factures récentes</h2>
-        </div>
-        <div className="divide-y">
-          {recentInvoices.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              <FileText className="mx-auto h-12 w-12 text-gray-300 mb-4" />
-              <p>Aucune facture pour le moment</p>
-              <Link href="/cabinet/invoices" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
-                Importer une facture
-              </Link>
-            </div>
-          ) : (
-            recentInvoices.map((invoice) => (
-              <div
-                key={invoice.id}
-                className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-full bg-red-100 flex items-center justify-center">
-                    <span className="text-red-600 font-semibold text-sm">
-                      {(invoice.vendor || '?').charAt(0).toUpperCase()}
-                    </span>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto px-4">
+        {companies.map((company) => {
+          const colors = colorClasses[company.color];
+          const Icon = company.icon;
+          
+          return (
+            <Link 
+              key={company.id} 
+              href={`/cabinet/${company.id}`}
+              className="block"
+            >
+              <Card className={`${colors.border} border-2 transition-all hover:shadow-lg hover:scale-[1.02] cursor-pointer h-full`}>
+                <CardHeader className={`${colors.bg} pb-4`}>
+                  <div className="flex items-center justify-between">
+                    <div className={`p-3 rounded-xl ${colors.icon}`}>
+                      <Icon className="h-8 w-8" />
+                    </div>
+                    <ArrowRight className={`h-5 w-5 ${colors.text}`} />
                   </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">{invoice.vendor || 'Fournisseur inconnu'}</h3>
-                    <p className="text-sm text-gray-500">{invoice.originalName}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-4">
-                  {invoice.amount && (
-                    <span className="font-medium text-green-600">
-                      {invoice.amount.toFixed(2)} €
-                    </span>
-                  )}
-                  {invoice.status === 'TO_PROCESS' || invoice.status === 'PROCESSING' ? (
-                    <Badge variant="secondary" className="bg-orange-100 text-orange-800">
-                      À traiter
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="bg-green-100 text-green-800">
-                      Traité
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+                </CardHeader>
+                <CardContent className="pt-4">
+                  <CardTitle className="text-xl mb-1">{company.name}</CardTitle>
+                  <p className="text-sm text-gray-500">{company.description}</p>
+                </CardContent>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
 
-      {/* Quick links */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Link href="/cabinet/invoices">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-blue-100 flex items-center justify-center">
-                <FileText className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <h3 className="font-medium">Toutes les factures</h3>
-                <p className="text-sm text-gray-500">Voir et gérer toutes les factures</p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-
-        <Link href="/cabinet/vendors">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-6 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-red-100 flex items-center justify-center">
-                <Building2 className="h-6 w-6 text-red-600" />
-              </div>
-              <div>
-                <h3 className="font-medium">Fournisseurs</h3>
-                <p className="text-sm text-gray-500">Voir la liste des fournisseurs</p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
+      <div className="text-center mt-12">
+        <p className="text-sm text-gray-400">
+          Chaque société dispose de son propre coffre de factures.
+          <br />
+          Les factures sont automatiquement triées par l'OCR.
+        </p>
       </div>
     </div>
-  )
+  );
 }

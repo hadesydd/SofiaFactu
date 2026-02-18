@@ -25,7 +25,8 @@ import {
   Search, Trash2, CheckCircle, Upload, 
   FileText, AlertTriangle, CheckCircle2, XCircle, Loader2,
   CloudUpload, Building, Calendar, Euro, Target, FileCheck,
-  Image, File, X, Eye, Download, ChevronLeft, ChevronRight, Check
+  Image, File, X, Eye, Download, ChevronLeft, ChevronRight, Check,
+  RefreshCw
 } from "lucide-react";
 
 interface Invoice {
@@ -33,12 +34,16 @@ interface Invoice {
   filename: string;
   originalName: string;
   vendor: string | null;
+  clientName: string | null;
+  invoiceNumber: string | null;
   amount: number | null;
+  vatAmount: number | null;
   date: string | null;
   status: string;
   confidence: number | null;
   ocrText: string | null;
   category: string | null;
+  company: string | null;
   filePath: string;
   mimeType: string;
   size: number;
@@ -104,7 +109,10 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
     ocrText: string | null;
   } | null>(null);
   const [batchQueue, setBatchQueue] = useState<string[]>([]);
+  const [isBatchMode, setIsBatchMode] = useState<boolean>(false);
   const [validatedIds, setValidatedIds] = useState<Set<string>>(new Set());
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceMessage, setEnhanceMessage] = useState<{ type: 'success' | 'info'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchInvoices = useCallback(async () => {
@@ -225,6 +233,9 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
     
     if (uploadedIds.length > 1) {
       setBatchQueue(uploadedIds);
+      setIsBatchMode(true);
+    } else {
+      setIsBatchMode(false);
     }
   }, []);
 
@@ -255,6 +266,9 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
 
     if (uploadedIds.length > 1) {
       setBatchQueue(uploadedIds);
+      setIsBatchMode(true);
+    } else {
+      setIsBatchMode(false);
     }
 
     if (fileInputRef.current) {
@@ -296,6 +310,36 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
   const handleDelete = async (id: string) => {
     await fetch(`/api/invoices/${id}`, { method: "DELETE" });
     await fetchInvoices();
+  };
+
+  const handleEnhance = async () => {
+    setEnhancing(true);
+    setEnhanceMessage(null);
+    
+    try {
+      const res = await fetch("/api/invoices/enhance", {
+        method: "POST",
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setEnhanceMessage({
+          type: data.updated > 0 ? 'success' : 'info',
+          text: data.message
+        });
+        fetchInvoices();
+      }
+    } catch (error) {
+      setEnhanceMessage({
+        type: 'success',
+        text: 'Erreur lors de la synchronisation'
+      });
+    }
+    
+    setEnhancing(false);
+    
+    // Clear message after 5 seconds
+    setTimeout(() => setEnhanceMessage(null), 5000);
   };
 
   const handleNavigate = async (direction: 'prev' | 'next') => {
@@ -503,17 +547,44 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                 <CloudUpload className="h-4 w-4" />
                 Importer des factures
               </CardTitle>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileSelect}
-                accept=".pdf,.jpg,.jpeg,.png,.gif"
-                multiple
-                className="hidden"
-                {...getInputProps()}
-              />
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEnhance}
+                  disabled={enhancing}
+                  className="flex items-center gap-2"
+                >
+                  {enhancing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  {enhancing ? 'Synchronisation...' : 'Synchroniser'}
+                </Button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                  accept=".pdf,.jpg,.jpeg,.png,.gif"
+                  multiple
+                  className="hidden"
+                  {...getInputProps()}
+                />
+              </div>
             </div>
           </CardHeader>
+          
+          {/* Message de synchronisation */}
+          {enhanceMessage && (
+            <div className={`mx-6 mb-4 p-3 rounded-lg text-sm ${
+              enhanceMessage.type === 'success' 
+                ? 'bg-green-50 text-green-700 border border-green-200' 
+                : 'bg-blue-50 text-blue-700 border border-blue-200'
+            }`}>
+              {enhanceMessage.text}
+            </div>
+          )}
           
           <CardContent className="relative z-10">
             <div className={`
@@ -700,6 +771,7 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                         onClick={() => {
                           if (upload.invoiceId) {
                             setBatchQueue(prev => prev.includes(upload.invoiceId!) ? prev : [...prev, upload.invoiceId!]);
+                            setIsBatchMode(true);
                           }
                           setPdfViewer({
                             isOpen: true,
@@ -908,7 +980,9 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                       <TableHead className="w-12"></TableHead>
                       <TableHead>Facture</TableHead>
                       <TableHead>Fournisseur</TableHead>
+                      <TableHead>Société</TableHead>
                       <TableHead className="text-right">Montant</TableHead>
+                      <TableHead className="text-right">TVA</TableHead>
                       <TableHead className="text-right">Date</TableHead>
                       <TableHead>Statut</TableHead>
                       <TableHead className="w-12"></TableHead>
@@ -916,7 +990,30 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                   </TableHeader>
                   <TableBody>
                     {invoices.map((invoice) => (
-                      <TableRow key={invoice.id} className="group">
+                      <TableRow 
+                        key={invoice.id} 
+                        className="group cursor-pointer hover:bg-muted/50"
+                        onClick={(e) => {
+                          // Prevent opening when clicking checkbox or action buttons
+                          if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('[role="checkbox"]')) {
+                            return;
+                          }
+                          console.log('Opening PDF viewer for:', invoice.filePath);
+                          setIsBatchMode(false);
+                          setPdfViewer({
+                            isOpen: true,
+                            invoiceId: invoice.id,
+                            filePath: invoice.filePath,
+                            fileName: invoice.originalName,
+                            vendor: invoice.vendor,
+                            amount: invoice.amount,
+                            date: invoice.date,
+                            confidence: invoice.confidence,
+                            category: invoice.category,
+                            ocrText: invoice.ocrText
+                          });
+                        }}
+                      >
                         <TableCell>
                           <Checkbox
                             checked={selectedIds.has(invoice.id)}
@@ -945,8 +1042,29 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
+                        <TableCell>
+                          {invoice.company ? (
+                            <Badge variant="outline" className={
+                              invoice.company === 'SOFIA_TRANSPORT' ? 'border-blue-500 text-blue-600' :
+                              invoice.company === 'SOFIANE_TRANSPORT' ? 'border-orange-500 text-orange-600' :
+                              invoice.company === 'GARAGE_EXPERTISE' ? 'border-green-500 text-green-600' :
+                              'border-gray-500 text-gray-600'
+                            }>
+                              {invoice.company === 'SOFIA_TRANSPORT' ? 'Sofia' :
+                               invoice.company === 'SOFIANE_TRANSPORT' ? 'Sofiane' :
+                               invoice.company === 'GARAGE_EXPERTISE' ? 'Garage' :
+                               invoice.company === 'UNKNOWN' ? 'Non classé' :
+                               invoice.company}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right font-medium">
                           {formatAmount(invoice.amount)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {invoice.vatAmount ? formatAmount(invoice.vatAmount) : '—'}
                         </TableCell>
                         <TableCell className="text-right text-muted-foreground">
                           {formatDate(invoice.date)}
@@ -955,12 +1073,14 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                           {getStatusBadge(invoice.status, invoice.confidence)}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1">
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 console.log('Opening PDF viewer for:', invoice.filePath);
+                                setIsBatchMode(false);
                                 setPdfViewer({
                                   isOpen: true,
                                   invoiceId: invoice.id,
@@ -981,7 +1101,10 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => window.open(invoice.filePath, '_blank')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(invoice.filePath, '_blank');
+                              }}
                               className="opacity-100"
                             >
                               <Download className="h-4 w-4 text-muted-foreground hover:text-primary" />
@@ -989,7 +1112,10 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => setDeleteConfirmId(invoice.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteConfirmId(invoice.id);
+                              }}
                               className="opacity-100"
                             >
                               <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
@@ -1020,6 +1146,7 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
           onClose={() => {
             setPdfViewer(null);
             setBatchQueue([]);
+            setIsBatchMode(false);
           }}
           invoiceId={pdfViewer.invoiceId}
           filePath={pdfViewer.filePath}
@@ -1030,10 +1157,10 @@ export function InvoiceList({ initialInvoices, initialCounts }: InvoiceListProps
           confidence={pdfViewer.confidence}
           category={pdfViewer.category}
           ocrText={pdfViewer.ocrText}
-          batchQueue={batchQueue.length > 1 ? batchQueue : invoices.map(inv => inv.id)}
-          currentIndex={getCurrentIndex()}
-          onNavigate={handleNavigate}
-          onValidateAll={batchQueue.length > 1 ? handleValidateAll : undefined}
+          batchQueue={isBatchMode && batchQueue.length > 1 ? batchQueue : (isBatchMode ? invoices.map(inv => inv.id) : [])}
+          currentIndex={isBatchMode ? getCurrentIndex() : 0}
+          onNavigate={isBatchMode ? handleNavigate : undefined}
+          onValidateAll={isBatchMode && batchQueue.length > 1 ? handleValidateAll : undefined}
           onValidate={handleValidateOne}
           isValidated={validatedIds.has(pdfViewer.invoiceId || '')}
         />

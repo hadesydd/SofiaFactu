@@ -156,22 +156,38 @@ enum InvoiceStatus {
   VALIDATED
 }
 
+enum InvoiceCompany {
+  SOFIA_TRANSPORT
+  SOFIANE_TRANSPORT
+  GARAGE_EXPERTISE
+  UNKNOWN
+}
+
 model Invoice {
-  id           String       @id @default(cuid())
+  id           String        @id @default(cuid())
   filename     String
   originalName String       @map("original_name")
   vendor       String?
+  clientName   String?       @map("client_name")
+  invoiceNumber String?      @map("invoice_number")
   amount       Float?
+  vatAmount    Float?        @map("vat_amount")
   date         DateTime?
   status       InvoiceStatus @default(TO_PROCESS)
   confidence   Float?
-  ocrText      String?      @db.Text
+  ocrText      String?       @db.Text
   category     String?
-  filePath     String       @map("file_path")
-  mimeType     String       @map("mime_type")
+  filePath     String        @map("file_path")
+  mimeType     String        @map("mime_type")
   size         Int
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
+  company      InvoiceCompany? @default(SOFIA_TRANSPORT)
+  iban         String?
+  email        String?
+  phone        String?
+  siret        String?
+  address      String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
 
   @@map("invoices")
 }

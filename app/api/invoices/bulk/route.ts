@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, invoiceIds } = body;
+    const { action, invoiceIds, company } = body;
 
     if (!invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return NextResponse.json(
@@ -26,6 +26,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, deleted: invoiceIds.length });
       case 'categorize':
         updateData = { category: body.category };
+        break;
+      case 'assign-company':
+        if (!company) {
+          return NextResponse.json(
+            { error: 'No company provided' },
+            { status: 400 }
+          );
+        }
+        updateData = { company: company };
         break;
       default:
         return NextResponse.json(
