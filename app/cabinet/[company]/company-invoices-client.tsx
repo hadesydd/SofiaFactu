@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,10 +46,67 @@ interface Counts {
   unclassified?: number;
 }
 
+interface UploadResponse {
+  id: string;
+}
+
 const companyConfig: Record<string, { name: string; color: string }> = {
   "sofia-transport": { name: "Sofia Transport", color: "blue" },
   "sofiane-transport": { name: "Sofiane Transport", color: "orange" },
   "garage-expertise": { name: "Garage Expertise", color: "green" },
+};
+
+const formatCurrency = (value: number | null | undefined) =>
+  new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value ?? 0);
+
+const parseAmount = (raw: string): number | null => {
+  const cleaned = raw.replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const extractDisplayedAmounts = (
+  ocrText: string | null,
+  amount: number | null,
+  vatAmount: number | null,
+): { total: number | null; vat: number | null } => {
+  if (!ocrText) {
+    return { total: amount, vat: vatAmount };
+  }
+
+  let detectedTotal: number | null = null;
+  let detectedVat: number | null = null;
+
+  const totalRegex =
+    /(?:NET\s*[ÀA]?\s*PAY(?:E|ER)|TOTAL\s*TTC|TOTAL\s*TVA\s*COMPRISE|TOTAL\s*[ÀA]?\s*PAYER|MONTANT\s*TTC)[^\d]{0,25}(\d{1,3}(?:[\s.]\d{3})*(?:[.,]\d{2}))/gi;
+  const vatRegex =
+    /(?:MONTANT\s*TVA|TOTAL\s*TVA|TVA(?:\s*\d{1,2}%?)?)[^\d]{0,25}(\d{1,3}(?:[\s.]\d{3})*(?:[.,]\d{2}))/gi;
+
+  for (const match of ocrText.matchAll(totalRegex)) {
+    const candidate = parseAmount(match[1]);
+    if (candidate == null) continue;
+    if (detectedTotal == null || candidate > detectedTotal) {
+      detectedTotal = candidate;
+    }
+  }
+
+  for (const match of ocrText.matchAll(vatRegex)) {
+    const candidate = parseAmount(match[1]);
+    if (candidate == null) continue;
+    if (detectedVat == null || candidate > detectedVat) {
+      detectedVat = candidate;
+    }
+  }
+
+  const finalTotal = detectedTotal ?? amount;
+  const finalVat = detectedVat ?? vatAmount;
+
+  return { total: finalTotal, vat: finalVat };
 };
 
 export function CompanyInvoicesClient({ 
@@ -71,9 +128,11 @@ export function CompanyInvoicesClient({
   const [status, setStatus] = useState("all");
   const [period, setPeriod] = useState("all");
   const [vendor, setVendor] = useState("all");
+  const [companyFilter, setCompanyFilter] = useState(companyId || "all");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   const [isDragActive, setIsDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, { progress: number; status: string }>>({});
@@ -110,14 +169,16 @@ export function CompanyInvoicesClient({
     if (vendor !== "all") params.set("vendor", vendor);
     if (minAmount) params.set("minAmount", minAmount);
     if (maxAmount) params.set("maxAmount", maxAmount);
-    params.set("company", companyId);
+    if (companyFilter !== "all") {
+      params.set("company", companyFilter);
+    }
 
     const res = await fetch(`/api/invoices?${params}`);
     const data = await res.json();
     setInvoices(data.invoices);
     setCounts(data.counts);
     setLoading(false);
-  }, [search, status, period, vendor, minAmount, maxAmount, companyId]);
+  }, [search, status, period, vendor, minAmount, maxAmount, companyFilter]);
 
   useEffect(() => {
     fetchInvoices();
@@ -140,19 +201,7 @@ export function CompanyInvoicesClient({
     checkUnclassified();
   }, []);
 
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragActive(false);
-    
-    const files = Array.from(e.dataTransfer.files).filter(
-      f => f.type === "application/pdf" || f.type.startsWith("image/")
-    );
-    
-    for (const file of files) {
-      await uploadFile(file);
-    }
-    
-    // After all uploads, check for unclassified
+  const runAfterUploads = () => {
     setTimeout(async () => {
       const res = await fetch('/api/invoices/unclassified');
       const data = await res.json();
@@ -160,7 +209,36 @@ export function CompanyInvoicesClient({
         setUnclassifiedInvoices(data.invoices);
         setShowUnclassifiedModal(true);
       }
-    }, 3000);
+      fetchInvoices();
+    }, 2000);
+  };
+
+  const uploadFilesWithConcurrency = async (files: File[], concurrency = 3) => {
+    if (files.length === 0) return;
+
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, files.length) }, async () => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= files.length) break;
+        await uploadFile(files[index]);
+      }
+    });
+
+    await Promise.all(workers);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragActive(false);
+    
+    const files = Array.from(e.dataTransfer.files).filter(
+      f => f.type === "application/pdf" || f.type.startsWith("image/")
+    );
+
+    await uploadFilesWithConcurrency(files);
+    runAfterUploads();
   };
 
   const uploadFile = async (file: File) => {
@@ -188,7 +266,7 @@ export function CompanyInvoicesClient({
         }
       };
 
-      const response = await new Promise<any>((resolve, reject) => {
+      const response = await new Promise<UploadResponse>((resolve, reject) => {
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve(JSON.parse(xhr.responseText));
@@ -207,30 +285,12 @@ export function CompanyInvoicesClient({
       }));
 
       setJustUploadedId(response.id);
-      
-      // Only show PDF viewer if company was detected
-      if (response.company && response.company !== 'UNKNOWN') {
-        setPdfViewer({
-          isOpen: true,
-          isEditing: true,
-          invoiceId: response.id,
-          filePath: response.filePath,
-          fileName: response.originalName,
-          vendor: response.vendor,
-          amount: response.amount,
-          date: response.date,
-          confidence: response.confidence,
-          category: response.category,
-          ocrText: response.ocrText
-        });
-      }
 
       setTimeout(() => {
         setUploadProgress(prev => {
           const { [uploadId]: _, ...rest } = prev;
           return rest;
         });
-        fetchInvoices();
       }, 2000);
 
     } catch (error) {
@@ -244,21 +304,10 @@ export function CompanyInvoicesClient({
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    
-    for (const file of Array.from(files)) {
-      await uploadFile(file);
-    }
-    
-    // After all uploads, check for unclassified
-    setTimeout(async () => {
-      const res = await fetch('/api/invoices/unclassified');
-      const data = await res.json();
-      if (data.invoices && data.invoices.length > 0) {
-        setUnclassifiedInvoices(data.invoices);
-        setShowUnclassifiedModal(true);
-      }
-    }, 3000);
-    
+
+    await uploadFilesWithConcurrency(Array.from(files));
+    runAfterUploads();
+
     e.target.value = "";
   };
 
@@ -382,11 +431,13 @@ export function CompanyInvoicesClient({
     setStatus("all");
     setPeriod("all");
     setVendor("all");
+    setCompanyFilter(companyId || "all");
     setMinAmount("");
     setMaxAmount("");
   };
 
-  const hasActiveFilters = search || status !== "all" || period !== "all" || vendor !== "all" || minAmount || maxAmount;
+  const hasActiveFilters =
+    search || status !== "all" || period !== "all" || vendor !== "all" || companyFilter !== (companyId || "all") || minAmount || maxAmount;
 
   return (
     <div className="flex h-full gap-6">
@@ -442,13 +493,38 @@ export function CompanyInvoicesClient({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Toutes les périodes</SelectItem>
-                  <SelectItem value="today">Aujourd'hui</SelectItem>
+                  <SelectItem value="today">Aujourd&apos;hui</SelectItem>
                   <SelectItem value="week">Cette semaine</SelectItem>
-                  <SelectItem value="month">Ce mois</SelectItem>
+                  <SelectItem value="thisMonth">Ce mois</SelectItem>
                   <SelectItem value="lastMonth">Mois dernier</SelectItem>
-                  <SelectItem value="year">Cette année</SelectItem>
+                  <SelectItem value="thisYear">Cette année</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Société</label>
+              <Select value={companyFilter} onValueChange={setCompanyFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Toutes les sociétés" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes les sociétés</SelectItem>
+                  <SelectItem value="sofia-transport">Sofia Transport</SelectItem>
+                  <SelectItem value="sofiane-transport">Sofiane Transport</SelectItem>
+                  <SelectItem value="garage-expertise">Garage Expertise</SelectItem>
+                  <SelectItem value="unknown">Non classée</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Fournisseur</label>
+              <Input
+                placeholder="Nom fournisseur"
+                value={vendor === "all" ? "" : vendor}
+                onChange={(e) => setVendor(e.target.value.trim() ? e.target.value : "all")}
+              />
             </div>
 
             <div className="space-y-2">
@@ -533,7 +609,7 @@ export function CompanyInvoicesClient({
                 </Button>
               </div>
             )}
-            
+
             <Button 
               variant="outline" 
               size="sm"
@@ -547,16 +623,17 @@ export function CompanyInvoicesClient({
               )}
               {syncing ? 'Synchronisation...' : 'Synchroniser'}
             </Button>
-            
-            <div className="relative">
-              <input
-                type="file"
-                accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
-                multiple
-                onChange={handleFileSelect}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <Button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <div>
+              <Button onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-4 w-4 mr-2" />
                 Importer
               </Button>
@@ -630,7 +707,7 @@ export function CompanyInvoicesClient({
                       </th>
                       <th className="p-3 text-left text-sm font-medium">Fichier</th>
                       <th className="p-3 text-left text-sm font-medium">Fournisseur</th>
-                      <th className="p-3 text-left text-sm font-medium">Montant</th>
+                      <th className="p-3 text-left text-sm font-medium">Total</th>
                       <th className="p-3 text-left text-sm font-medium">TVA</th>
                       <th className="p-3 text-left text-sm font-medium">Date</th>
                       <th className="p-3 text-left text-sm font-medium">Statut</th>
@@ -638,7 +715,9 @@ export function CompanyInvoicesClient({
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {invoices.map((invoice) => (
+                    {invoices.map((invoice) => {
+                      const displayed = extractDisplayedAmounts(invoice.ocrText, invoice.amount, invoice.vatAmount);
+                      return (
                       <tr 
                         key={invoice.id} 
                         className={`hover:bg-muted/50 transition-colors cursor-pointer ${justUploadedId === invoice.id ? 'bg-green-50' : ''}`}
@@ -653,7 +732,7 @@ export function CompanyInvoicesClient({
                             filePath: invoice.filePath,
                             fileName: invoice.originalName,
                             vendor: invoice.vendor,
-                            amount: invoice.amount,
+                            amount: displayed.total,
                             date: invoice.date,
                             confidence: invoice.confidence,
                             category: invoice.category,
@@ -679,22 +758,14 @@ export function CompanyInvoicesClient({
                           <span className="text-sm">{invoice.vendor || '—'}</span>
                         </td>
                         <td className="p-3">
-                          {invoice.amount ? (
-                            <span className="text-sm font-medium text-green-600">
-                              {invoice.amount.toFixed(2)} €
-                            </span>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )}
+                          <span className={`text-sm font-medium ${displayed.total == null ? "text-muted-foreground" : "text-green-600"}`}>
+                            {formatCurrency(displayed.total)}
+                          </span>
                         </td>
                         <td className="p-3">
-                          {invoice.vatAmount ? (
-                            <span className="text-sm text-muted-foreground">
-                              {invoice.vatAmount.toFixed(2)} €
-                            </span>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )}
+                          <span className={`text-sm ${displayed.vat == null ? "text-muted-foreground" : ""}`}>
+                            {formatCurrency(displayed.vat)}
+                          </span>
                         </td>
                         <td className="p-3">
                           {invoice.date ? (
@@ -720,7 +791,7 @@ export function CompanyInvoicesClient({
                                 filePath: invoice.filePath,
                                 fileName: invoice.originalName,
                                 vendor: invoice.vendor,
-                                amount: invoice.amount,
+                                amount: displayed.total,
                                 date: invoice.date,
                                 confidence: invoice.confidence,
                                 category: invoice.category,
@@ -732,7 +803,8 @@ export function CompanyInvoicesClient({
                           </Button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

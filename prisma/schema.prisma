@@ -163,6 +163,13 @@ enum InvoiceCompany {
   UNKNOWN
 }
 
+enum OcrJobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
 model Invoice {
   id           String        @id @default(cuid())
   filename     String
@@ -180,14 +187,42 @@ model Invoice {
   filePath     String        @map("file_path")
   mimeType     String        @map("mime_type")
   size         Int
-  company      InvoiceCompany? @default(SOFIA_TRANSPORT)
+  company      InvoiceCompany? @default(UNKNOWN)
   iban         String?
   email        String?
   phone        String?
   siret        String?
   address      String?
+  ocrData      Json?         @map("ocr_data")
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
+  ocrJobs      OcrJob[]
 
+  @@index([status])
+  @@index([company])
+  @@index([createdAt(sort: Desc)])
+  @@index([vendor])
+  @@index([date])
+  @@index([company, status, createdAt(sort: Desc)])
   @@map("invoices")
+}
+
+model OcrJob {
+  id          String       @id @default(cuid())
+  invoiceId   String       @map("invoice_id")
+  invoice     Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  status      OcrJobStatus @default(PENDING)
+  attempts    Int          @default(0)
+  maxAttempts Int          @default(3) @map("max_attempts")
+  priority    Int          @default(0)
+  lockedAt    DateTime?    @map("locked_at")
+  lockedBy    String?      @map("locked_by")
+  lastError   String?      @map("last_error") @db.Text
+  availableAt DateTime     @default(now()) @map("available_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@index([status, availableAt, priority, createdAt(sort: Asc)])
+  @@index([invoiceId])
+  @@map("ocr_jobs")
 }
